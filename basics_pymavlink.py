@@ -166,3 +166,28 @@ class DroneDrive:
             vx, vy, vz,
             0, 0, 0, 0, 0
         )
+
+    def send_position(self,x,y,z):
+        type_mask=(
+            # common.POSITION_TARGET_TYPEMASK_X_IGNORE |
+            # common.POSITION_TARGET_TYPEMASK_Y_IGNORE |
+            # common.POSITION_TARGET_TYPEMASK_Z_IGNORE |
+            common.POSITION_TARGET_TYPEMASK_VX_IGNORE | 
+            common.POSITION_TARGET_TYPEMASK_VY_IGNORE | 
+            common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | 
+            common.POSITION_TARGET_TYPEMASK_AX_IGNORE |
+            common.POSITION_TARGET_TYPEMASK_AY_IGNORE |
+            common.POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+            common.POSITION_TARGET_TYPEMASK_FORCE_SET | # Ignore Force
+            common.POSITION_TARGET_TYPEMASK_YAW_IGNORE |
+            common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+        
+        )
+        self.connection.mav.set_position_target_local_ned_send(
+            0, self.connection.target_system, self.connection.target_component,
+            common.MAV_FRAME_LOCAL_OFFSET_NED, 
+            type_mask, 
+            x, y, z,
+            0, 0, 0,
+            0, 0, 0, 0, 0
+        )

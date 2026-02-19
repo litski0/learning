@@ -6,12 +6,15 @@ import cv2
 import math
 import argparse
 
+
+
 from Tut_redCircle import RedCircleDetector
+from basics_pymavlink import DroneDrive
 
 
 # --- CONFIGURATION ---
-CONNECTION_STRING = 'tcp:127.0.0.1:5760'
-BAUD_RATE = 57600
+CONNECTION_STRING = 'udpin:localhost:14550'
+BAUD_RATE = 115200
 CAMERA_FOV_X = 60.0  # Degrees
 CAMERA_FOV_Y = 45.0  # Degrees
 RES_X, RES_Y = 640, 480 # Standard Webcams
@@ -36,8 +39,27 @@ class SharedState:
         with self.lock:
             return self.found, self.x, self.y, self.radius
 
-def mavlink_loop(stop_event, shared_state):
-    pass
+def mavlink_loop(stop_event, shared_state):    
+  
+    drone= DroneDrive(CONNECTION_STRING)
+    drone.set_mode("GUIDED")
+    if not drone.arm():
+        print("[THREAD] Failed to arm .. ")
+        return
+    
+    drone.takeoff(10)
+    print("[THREAD] Hovering .. ")
+    drone.send_position(10,10,-10)
+    while True and (not stop_event.is_set()):
+        found,x,y, radius = shared_state.get()
+        if found:
+            drone.set_mode("LAND")
+            print("[THREAD] Red Circle was Found")
+            exit
+        else :
+            drone.send_velocity(0,0,0)
+        time.sleep(0.1)
+
 
 def mavlink_own():
     AP_GUIDED=4
@@ -98,6 +120,7 @@ def mavlink_own():
         )
         arm_msg = the_connection.recv_match(type="COMMAND_ACK",blocking=True)
         print(arm_msg)
+        time.sleep(1)
         if(arm_msg and arm_msg.command == common.MAV_CMD_COMPONENT_ARM_DISARM):
             arm_result=arm_msg.result
     print("Armed Successfully")
@@ -144,7 +167,7 @@ def mavlink_own():
             0,
             the_connection.target_system,
             the_connection.target_component,
-            common.MAV_FRAME_BODY_FRD, 
+            common.MAV_FRAME_BODY_OFFSET_NED, 
             mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE |mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE |mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE |mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE |mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE |mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE |mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE,
             dist,0,0,
             0,0,0,
@@ -165,3 +188,60 @@ def mavlink_own():
 
     for i in range (4):
         ForwardandYaw(length,90)
+
+def main():
+    state=SharedState()
+    stop_event=threading.Event()
+
+    drone_thread=threading.Thread(target=mavlink_loop,args=(stop_event,state))
+    drone_thread.start()
+    
+    WIDTH = 640
+    HEIGHT = 480
+    CHANNELS = 3
+    FRAME_BYTES = WIDTH * HEIGHT * CHANNELS
+
+    # We take the exact command from your documentation and change the final 
+    # element from 'autovideosink' (display to screen) to 'fdsink fd=1' (dump raw bytes to stdout)
+    pipeline = (
+        "udpsrc port=5600 caps=\"application/x-rtp, media=video, clock-rate=90000, encoding-name=H264, payload=96\" ! "
+        "rtph264depay ! h264parse ! avdec_h264 ! "
+        "videoconvert ! video/x-raw, format=BGR ! "
+        "appsink drop=true max-buffers=1 sync=false"
+    )
+    detector = RedCircleDetector()
+    print("Listening to Gazebo UDP Port 5600...")
+    cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+    if not cap.isOpened():
+        print("FATAL ERROR: Could not open stream.")
+        print("Ensure stream is active AND OpenCV is compiled with GStreamer support.")
+        exit()
+
+    try: 
+        while True:
+            ret, frame = cap.read()
+           
+            if not ret:
+                print("Dropped frame or stream interrupted.")
+                continue
+            
+            # Correct implementation:
+            found, x, y, radius, img = detector.detect(frame)
+            state.update(found, x, y, radius)
+            cv2.imshow("Drone Vision", img)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+            
+    finally:
+        # This guarantees the background thread is killed cleanly
+        print("[MAIN] Shutting down...")
+        stop_event.set()
+        drone_thread.join()
+        cap.release()
+        cv2.destroyAllWindows()
+        print("[MAIN] Exited cleanly.")
+
+if __name__ == '__main__':
+    main()
+    # mavlink_own()
